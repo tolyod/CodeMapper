@@ -23,7 +23,10 @@ export interface ProjectState {
   totalCount: number;
   currentFileIndex: number;
   isProcessing: boolean;
-  generatedMermaid: string;
+  // CHANGED: Store a map of diagrams instead of a single string
+  diagrams: Record<string, string>;
+  // Track which diagram is currently being viewed
+  activeDiagramId: string;
   logs: LogEntry[];
   startTime: number | null;
 }
@@ -38,7 +41,7 @@ export interface SavedState {
   projectName: string;
   processedCount: number;
   currentFileIndex: number;
-  generatedMermaid: string;
+  diagrams: Record<string, string>;
   logs: LogEntry[];
   // We cannot save File objects to JSON, so on resume, we map by path
   filePathsProcessed: string[]; 

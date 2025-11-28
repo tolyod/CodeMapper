@@ -6,13 +6,32 @@ export interface FileInput {
   content: string;
 }
 
+export interface C4UpdateResult {
+  overviewDiagram: string;
+  moduleDiagram: string;
+  moduleName: string;
+}
+
+const getModuleName = (filePath: string): string => {
+  const parts = filePath.split('/');
+  // Use the directory of the file as the module name
+  // e.g., "src/auth/Login.ts" -> "src/auth"
+  // If at root, use "root"
+  if (parts.length <= 1) return 'root';
+  return parts.slice(0, parts.length - 1).join('/');
+};
+
 export const generateC4Update = async (
-  currentMermaid: string,
+  currentOverview: string,
+  currentModule: string | null,
   files: FileInput[],
   projectTree: string,
   config: LLMConfig
-): Promise<string> => {
+): Promise<C4UpdateResult> => {
   
+  // Heuristic: The module name for this batch is derived from the first file.
+  const primaryModule = getModuleName(files[0].name);
+
   const filesBlock = files.map(f => `
     --- FILE START: ${f.name} ---
     ${f.content.slice(0, 20000)}
@@ -22,48 +41,81 @@ export const generateC4Update = async (
   const systemPrompt = `
     You are an expert Software Architect specializing in C4 Model architecture diagrams using Mermaid JS syntax.
     
-    We are incrementally building a C4 Component diagram for a codebase.
+    We are incrementally building a complete C4 notation for a project. We need TWO outputs per request:
+    
+    1. **Overview Diagram (Context & Container Level):**
+       - High-level view showing Systems, Containers (Apps, Microservices, Databases), and External Systems.
+       - NO granular classes or components.
+       - Syntax: C4Context or C4Container.
+
+    2. **Module Diagram (Component Level) for folder '${primaryModule}':**
+       - Detailed view for the specific module/folder currently being scanned.
+       - Shows internal Components, Services, Controllers, and Classes within this folder.
+       - Syntax: C4Component.
 
     CONTEXT:
-    Here is the directory structure of the project to help you understand where the files fit in:
+    Project Structure:
     \`\`\`text
     ${projectTree}
     \`\`\`
     
-    Current State of Mermaid Diagram:
+    Current 'Overview' Diagram:
     \`\`\`mermaid
-    ${currentMermaid || 'C4Context\n    title System Context diagram\n    Container_Boundary(system, "Software System") {\n    }'}
+    ${currentOverview}
+    \`\`\`
+
+    Current 'Module: ${primaryModule}' Diagram:
+    \`\`\`mermaid
+    ${currentModule || `C4Component\n    title Component Diagram - ${primaryModule}\n    Container_Boundary(${primaryModule.replace(/[\W_]+/g,'_')}, "${primaryModule}") {\n    }`}
     \`\`\`
 
     TASK:
-    1. Analyze the provided BATCH OF FILES.
-    2. Identify significant Components, Controllers, Services, Repositories, or External System interactions in ALL provided files.
-    3. Update the Mermaid diagram to include new components found in these files.
-    4. Add relationships (Rel) based on imports, dependency injection, or API calls.
-    5. Maintain existing nodes. Do not remove them unless they are clearly erroneous based on these new files.
-    6. Group components into the "Software System" container boundary if appropriate.
+    1. Analyze the BATCH OF FILES.
+    2. Update the **Overview** if you find new high-level containers (e.g. new database connection, external API usage, or distinct microservice).
+    3. Update the **Module Diagram** with specific components found in these files.
+    4. Maintain valid Mermaid syntax.
     
     OUTPUT FORMAT:
-    Return ONLY the raw Mermaid code. Do not wrap it in markdown code blocks.
+    You MUST use these specific separators:
+    <<<OVERVIEW>>>
+    ... mermaid code for overview ...
+    <<<MODULE>>>
+    ... mermaid code for module ...
+    <<<END>>>
   `;
 
   const userPrompt = `
-    I am providing you with a BATCH of ${files.length} new files from the codebase.
+    I am providing you with a BATCH of ${files.length} new files from the codebase (Module: ${primaryModule}).
     
     FILES CONTENT:
     ${filesBlock}
   `;
 
+  let rawOutput = '';
+
   try {
     if (config.provider === 'google') {
-      return await generateWithGoogle(systemPrompt + "\n" + userPrompt, config);
+      rawOutput = await generateWithGoogle(systemPrompt + "\n" + userPrompt, config);
     } else {
-      return await generateWithOpenAI(systemPrompt, userPrompt, config);
+      rawOutput = await generateWithOpenAI(systemPrompt, userPrompt, config);
     }
+
+    return parseOutput(rawOutput, currentOverview, currentModule || '', primaryModule);
   } catch (error) {
     console.error("LLM Generation Error:", error);
     throw error;
   }
+};
+
+const parseOutput = (text: string, originalOverview: string, originalModule: string, moduleName: string): C4UpdateResult => {
+  const overviewMatch = text.match(/<<<OVERVIEW>>>([\s\S]*?)(?=<<<MODULE>>>|$)/);
+  const moduleMatch = text.match(/<<<MODULE>>>([\s\S]*?)(?=<<<END>>>|$)/);
+
+  return {
+    overviewDiagram: overviewMatch ? cleanMermaid(overviewMatch[1]) : originalOverview,
+    moduleDiagram: moduleMatch ? cleanMermaid(moduleMatch[1]) : originalModule,
+    moduleName: moduleName
+  };
 };
 
 const generateWithGoogle = async (fullPrompt: string, config: LLMConfig): Promise<string> => {
@@ -80,12 +132,12 @@ const generateWithGoogle = async (fullPrompt: string, config: LLMConfig): Promis
     }
   });
 
-  return cleanOutput(response.text || '');
+  return response.text || '';
 };
 
 const generateWithOpenAI = async (systemPrompt: string, userPrompt: string, config: LLMConfig): Promise<string> => {
   const baseUrl = config.baseUrl || 'https://api.openai.com/v1';
-  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`; // Ensure no trailing slash issues
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -117,8 +169,7 @@ const generateWithOpenAI = async (systemPrompt: string, userPrompt: string, conf
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  return cleanOutput(content);
+  return data.choices?.[0]?.message?.content || '';
 };
 
 const cleanOutput = (text: string): string => {

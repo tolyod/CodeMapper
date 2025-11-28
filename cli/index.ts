@@ -15,8 +15,9 @@ const BATCH_COUNT_LIMIT = 5;        // Max 5 files per batch
 const STATE_FILE = 'codemapper_state.json';
 const OUTPUT_FILE = 'diagram.mmd';
 
-const INITIAL_MERMAID = `C4Context
-    title System Context Diagram
+const OVERVIEW_DIAGRAM_KEY = 'System Overview';
+const INITIAL_OVERVIEW_MERMAID = `C4Context
+    title System Context Diagram (Overview)
     
     Container_Boundary(system, "System Scope") {
         System(core_app, "Core Application", "The main software system being analyzed")
@@ -25,7 +26,13 @@ const INITIAL_MERMAID = `C4Context
 
 interface State {
   processedFiles: string[];
-  mermaid: string;
+  diagrams: Record<string, string>;
+}
+
+interface C4UpdateResult {
+  overviewDiagram: string;
+  moduleDiagram: string;
+  moduleName: string;
 }
 
 // Colors for console output
@@ -99,13 +106,23 @@ function buildTreeString(paths: string[]): string {
   return lines.join('\n');
 }
 
+function getModuleName(filePath: string): string {
+    const parts = filePath.split('/');
+    if (parts.length <= 1) return 'root';
+    return parts.slice(0, parts.length - 1).join('/');
+}
+
 async function generateC4UpdateCLI(
-  currentMermaid: string,
+  currentOverview: string,
+  currentModule: string | null,
   files: {name: string, content: string}[],
   projectTree: string,
   config: { provider: string, apiKey: string, modelName: string, baseUrl?: string }
-): Promise<string> {
+): Promise<C4UpdateResult> {
   
+  // Primary module for this batch
+  const primaryModule = getModuleName(files[0].name);
+
   const filesBlock = files.map(f => `
     --- FILE START: ${f.name} ---
     ${f.content.slice(0, 20000)}
@@ -115,37 +132,57 @@ async function generateC4UpdateCLI(
   const systemPrompt = `
     You are an expert Software Architect specializing in C4 Model architecture diagrams using Mermaid JS syntax.
     
-    We are incrementally building a C4 Component diagram for a codebase.
+    We are incrementally building a complete C4 notation for a project. We need TWO outputs per request:
+    
+    1. **Overview Diagram (Context & Container Level):**
+       - High-level view showing Systems, Containers (Apps, Microservices, Databases), and External Systems.
+       - NO granular classes or components.
+       - Syntax: C4Context or C4Container.
+
+    2. **Module Diagram (Component Level) for folder '${primaryModule}':**
+       - Detailed view for the specific module/folder currently being scanned.
+       - Shows internal Components, Services, Controllers, and Classes within this folder.
+       - Syntax: C4Component.
 
     CONTEXT:
-    Here is the directory structure of the project to help you understand where the files fit in:
+    Project Structure:
     \`\`\`text
     ${projectTree}
     \`\`\`
     
-    Current State of Mermaid Diagram:
+    Current 'Overview' Diagram:
     \`\`\`mermaid
-    ${currentMermaid}
+    ${currentOverview}
+    \`\`\`
+
+    Current 'Module: ${primaryModule}' Diagram:
+    \`\`\`mermaid
+    ${currentModule || `C4Component\n    title Component Diagram - ${primaryModule}\n    Container_Boundary(${primaryModule.replace(/[\W_]+/g,'_')}, "${primaryModule}") {\n    }`}
     \`\`\`
 
     TASK:
-    1. Analyze the provided BATCH OF FILES.
-    2. Identify significant Components, Controllers, Services, Repositories, or External System interactions in ALL provided files.
-    3. Update the Mermaid diagram to include new components found in these files.
-    4. Add relationships (Rel) based on imports, dependency injection, or API calls.
-    5. Maintain existing nodes. Do not remove them unless they are clearly erroneous based on these new files.
-    6. Group components into the "Software System" container boundary if appropriate.
+    1. Analyze the BATCH OF FILES.
+    2. Update the **Overview** if you find new high-level containers (e.g. new database connection, external API usage, or distinct microservice).
+    3. Update the **Module Diagram** with specific components found in these files.
+    4. Maintain valid Mermaid syntax.
     
     OUTPUT FORMAT:
-    Return ONLY the raw Mermaid code. Do not wrap it in markdown code blocks.
+    You MUST use these specific separators:
+    <<<OVERVIEW>>>
+    ... mermaid code for overview ...
+    <<<MODULE>>>
+    ... mermaid code for module ...
+    <<<END>>>
   `;
 
   const userPrompt = `
-    I am providing you with a BATCH of ${files.length} new files from the codebase.
+    I am providing you with a BATCH of ${files.length} new files from the codebase (Module: ${primaryModule}).
     
     FILES CONTENT:
     ${filesBlock}
   `;
+
+  let rawOutput = '';
 
   if (config.provider === 'google') {
       const ai = new GoogleGenAI({ apiKey: config.apiKey });
@@ -154,10 +191,9 @@ async function generateC4UpdateCLI(
         contents: systemPrompt + "\n" + userPrompt,
         config: { temperature: 0.2 }
       });
-      return cleanOutput(response.text || '');
+      rawOutput = cleanOutput(response.text || '');
 
   } else {
-      // OpenAI / Local Compatible
       const baseUrl = config.baseUrl || 'https://api.openai.com/v1';
       const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
       
@@ -182,8 +218,17 @@ async function generateC4UpdateCLI(
       }
 
       const data: any = await response.json();
-      return cleanOutput(data.choices?.[0]?.message?.content || '');
+      rawOutput = cleanOutput(data.choices?.[0]?.message?.content || '');
   }
+
+  const overviewMatch = rawOutput.match(/<<<OVERVIEW>>>([\s\S]*?)(?=<<<MODULE>>>|$)/);
+  const moduleMatch = rawOutput.match(/<<<MODULE>>>([\s\S]*?)(?=<<<END>>>|$)/);
+
+  return {
+      overviewDiagram: overviewMatch ? cleanMermaid(overviewMatch[1]) : currentOverview,
+      moduleDiagram: moduleMatch ? cleanMermaid(moduleMatch[1]) : (currentModule || ''),
+      moduleName: primaryModule
+  };
 }
 
 function cleanOutput(text: string): string {
@@ -212,7 +257,7 @@ async function main() {
 
   const config = { provider, apiKey, modelName, baseUrl };
   
-  console.log(`${colors.cyan}CodeMapper CLI v1.2 (Smart Batching)${colors.reset}`);
+  console.log(`${colors.cyan}CodeMapper CLI v2.0 (Multi-View C4)${colors.reset}`);
   console.log(`${colors.gray}Target Directory: ${targetDir}${colors.reset}`);
   console.log(`${colors.gray}Provider: ${provider} | Model: ${modelName}${colors.reset}`);
 
@@ -231,7 +276,7 @@ async function main() {
   // 2. Load State
   let state: State = {
     processedFiles: [],
-    mermaid: INITIAL_MERMAID
+    diagrams: { [OVERVIEW_DIAGRAM_KEY]: INITIAL_OVERVIEW_MERMAID }
   };
 
   if (fs.existsSync(STATE_FILE)) {
@@ -247,7 +292,6 @@ async function main() {
   // 3. Process Loop (Batched)
   let processedCount = 0;
   
-  // Filter out already processed files first
   const remainingFiles = allFiles.filter(f => !state.processedFiles.includes(path.relative(targetDir, f)));
 
   let i = 0;
@@ -255,13 +299,18 @@ async function main() {
     // Construct Batch
     const batchPaths: string[] = [];
     let currentBatchSize = 0;
+    let currentBatchDir: string | null = null;
     
     while(i < remainingFiles.length && batchPaths.length < BATCH_COUNT_LIMIT) {
         const filePath = remainingFiles[i];
         const relativePath = path.relative(targetDir, filePath);
         const stat = fs.statSync(filePath);
 
-        // Skip large files check
+        // Check folder consistency
+        const fileDir = path.dirname(relativePath);
+        if (currentBatchDir === null) currentBatchDir = fileDir;
+        else if (currentBatchDir !== fileDir && batchPaths.length > 0) break; // Break batch if folder changes
+
         if (stat.size > MAX_FILE_SIZE) {
             console.log(`${colors.gray}[SKIP] ${relativePath} (Too large: ${(stat.size/1024).toFixed(1)}KB)${colors.reset}`);
             state.processedFiles.push(relativePath);
@@ -269,9 +318,8 @@ async function main() {
             continue;
         }
 
-        // Batch size limit check
         if (currentBatchSize + stat.size > BATCH_SIZE_LIMIT && batchPaths.length > 0) {
-            break; // Batch full
+            break; 
         }
 
         batchPaths.push(relativePath);
@@ -279,9 +327,10 @@ async function main() {
         i++;
     }
 
-    if (batchPaths.length === 0) continue; // Should not happen unless all remaining are skipped large files
+    if (batchPaths.length === 0) continue; 
 
-    (process as any).stdout.write(`${colors.cyan}[BATCH] Processing ${batchPaths.length} files (${batchPaths[0]}...)... ${colors.reset}`);
+    const batchDirName = currentBatchDir || 'root';
+    (process as any).stdout.write(`${colors.cyan}[BATCH] ${batchDirName} (${batchPaths.length} files)... ${colors.reset}`);
 
     try {
       const fileInputs = batchPaths.map(p => ({
@@ -289,18 +338,24 @@ async function main() {
           content: fs.readFileSync(path.join(targetDir, p), 'utf-8')
       }));
 
-      const updatedMermaid = await generateC4UpdateCLI(
-        state.mermaid,
+      const currentOverview = state.diagrams[OVERVIEW_DIAGRAM_KEY];
+      const currentModule = state.diagrams[batchDirName] || null;
+
+      const result = await generateC4UpdateCLI(
+        currentOverview,
+        currentModule,
         fileInputs,
         projectTree,
         config
       );
 
-      state.mermaid = updatedMermaid;
+      state.diagrams[OVERVIEW_DIAGRAM_KEY] = result.overviewDiagram;
+      state.diagrams[batchDirName] = result.moduleDiagram;
       state.processedFiles.push(...batchPaths);
       
       fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-      fs.writeFileSync(OUTPUT_FILE, state.mermaid);
+      // Save just the overview as the main artifact, or potentially a README
+      fs.writeFileSync(OUTPUT_FILE, state.diagrams[OVERVIEW_DIAGRAM_KEY]);
 
       (process as any).stdout.write(`${colors.green}DONE${colors.reset}\n`);
       processedCount += batchPaths.length;
@@ -311,14 +366,14 @@ async function main() {
     } catch (err: any) {
       (process as any).stdout.write(`${colors.red}FAILED${colors.reset}\n`);
       console.error(`${colors.red}  Error: ${err.message}${colors.reset}`);
-      // Don't add to processedFiles state, so they retry next time
     }
   }
 
   console.log(`\n${colors.green}----------------------------------------${colors.reset}`);
   console.log(`${colors.green}Completed!${colors.reset}`);
   console.log(`Processed: ${processedCount} new files.`);
-  console.log(`Diagram saved to: ${colors.yellow}${path.resolve(OUTPUT_FILE)}${colors.reset}`);
+  console.log(`Overview Diagram: ${colors.yellow}${path.resolve(OUTPUT_FILE)}${colors.reset}`);
+  console.log(`Full State (All Modules): ${colors.yellow}${path.resolve(STATE_FILE)}${colors.reset}`);
 }
 
 main();
