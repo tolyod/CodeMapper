@@ -225,8 +225,8 @@ async function generateC4UpdateCLI(
   const moduleMatch = rawOutput.match(/<<<MODULE>>>([\s\S]*?)(?=<<<END>>>|$)/);
 
   return {
-      overviewDiagram: overviewMatch ? cleanMermaid(overviewMatch[1]) : currentOverview,
-      moduleDiagram: moduleMatch ? cleanMermaid(moduleMatch[1]) : (currentModule || ''),
+      overviewDiagram: overviewMatch ? cleanOutput(overviewMatch[1]) : currentOverview,
+      moduleDiagram: moduleMatch ? cleanOutput(moduleMatch[1]) : (currentModule || ''),
       moduleName: primaryModule
   };
 }

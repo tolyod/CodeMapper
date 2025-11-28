@@ -112,8 +112,8 @@ const parseOutput = (text: string, originalOverview: string, originalModule: str
   const moduleMatch = text.match(/<<<MODULE>>>([\s\S]*?)(?=<<<END>>>|$)/);
 
   return {
-    overviewDiagram: overviewMatch ? cleanMermaid(overviewMatch[1]) : originalOverview,
-    moduleDiagram: moduleMatch ? cleanMermaid(moduleMatch[1]) : originalModule,
+    overviewDiagram: overviewMatch ? cleanOutput(overviewMatch[1]) : originalOverview,
+    moduleDiagram: moduleMatch ? cleanOutput(moduleMatch[1]) : originalModule,
     moduleName: moduleName
   };
 };

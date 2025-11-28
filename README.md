@@ -1,6 +1,6 @@
 # CodeMapper C4 - Architecture Diagram Generator
 
-CodeMapper is a utility that iteratively scans your codebase and uses Google's Gemini LLM to generate a C4 Component diagram using Mermaid.js syntax. It understands the context of your application by processing it file-by-file.
+CodeMapper is a utility that iteratively scans your codebase and uses Google's Gemini LLM (or compatible APIs like OpenAI/Ollama) to generate a C4 Component diagram using Mermaid.js syntax. It understands the context of your application by processing it file-by-file.
 
 It supports two modes:
 1. **Web Interface:** Interactive visualization, real-time diagram updates, and easy file selection.
@@ -13,7 +13,7 @@ It supports two modes:
 ## Prerequisites
 
 - **Node.js** (v18 or higher)
-- **Google Gemini API Key** (Get one at [aistudio.google.com](https://aistudio.google.com))
+- **API Key:** Google Gemini, OpenAI, or a local Ollama instance.
 
 ---
 
@@ -33,17 +33,37 @@ npm install
 
 The CLI is perfect for scanning local projects without opening a browser. It maintains a state file, allowing you to stop and resume scans at any time.
 
-### Configuration
+### Configuration (`.env`)
 
 1. Copy the example environment file:
    ```bash
    cp .env.example .env
    ```
-2. Open `.env` and paste your API Key:
-   ```ini
-   API_KEY=AIzaSy...
-   MODEL_NAME=gemini-2.5-flash
-   ```
+2. Configure your provider variables in `.env`:
+
+#### Option A: Google Gemini (Default)
+```ini
+LLM_PROVIDER=google
+API_KEY=AIzaSy...
+MODEL_NAME=gemini-2.5-flash
+```
+
+#### Option B: Local Ollama (Free)
+Run `ollama serve` locally first.
+```ini
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:11434/v1
+MODEL_NAME=llama3
+API_KEY=ollama
+```
+
+#### Option C: OpenAI / Compatible
+```ini
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=https://api.openai.com/v1
+API_KEY=sk-...
+MODEL_NAME=gpt-4o
+```
 
 ### Running the Scan
 
@@ -61,10 +81,8 @@ npm run cli -- ./src
 ### Output
 
 The CLI generates two files in the current directory:
-- `diagram.mmd`: The generated Mermaid C4 diagram code.
-- `codemapper_state.json`: Keeps track of processed files to allow resuming.
-
-To view the `diagram.mmd` file, you can use the [Mermaid Live Editor](https://mermaid.live) or the "Mermaid Preview" extension in VS Code.
+- `diagram.mmd`: The generated Mermaid C4 diagram code (Overview).
+- `codemapper_state.json`: Keeps track of processed files and stores all diagram modules.
 
 ---
 
@@ -82,15 +100,13 @@ Open [http://localhost:1234](http://localhost:1234) (or the port shown in your t
 ### Using the App
 
 1. **Select Project:** Click the **Open Project Directory** button and select your code folder.
-2. **API Key:** 
-   - If running in Project IDX, the key is handled automatically.
-   - If running locally, you may need to click "Select Google API Key" if not provided in env.
+2. **Settings:** Click the **Gear Icon** to configure:
+   - Provider (Google vs OpenAI/Local).
+   - Batch size (Optimization).
 3. **Start Scan:** Click the **Start** button in the left panel.
 4. **Interactive Processing:**
    - Watch the **File List** update in real-time.
-   - If a file fails (e.g., API timeout), click the **Retry** button next to the filename.
-   - The **Terminal** at the bottom shows detailed logs.
-   - The **Diagram View** on the right renders the C4 diagram as it evolves.
+   - The **Diagram View** supports multiple tabs (Overview vs Modules).
 5. **Save/Load:**
    - Use the **Save** icon in the header to download a JSON snapshot of your progress.
    - Use the **Upload** icon to restore a previous session.
@@ -100,10 +116,13 @@ Open [http://localhost:1234](http://localhost:1234) (or the port shown in your t
 ## Troubleshooting
 
 **CLI: "API_KEY not found"**
-Ensure you have created a `.env` file in the root of the CodeMapper directory and strictly followed the format in `.env.example`.
+Ensure you have created a `.env` file in the root of the CodeMapper directory and defined `API_KEY` (even if dummy for Ollama).
 
 **Mermaid Render Errors**
-If the diagram becomes too complex, Mermaid might fail to render. The CLI will still save the valid text code in `diagram.mmd`. You can manually edit this file to simplify relationships if needed.
+If the diagram becomes too complex, Mermaid might fail to render in the browser. The CLI/JSON state always saves the valid text code.
 
-**Rate Limiting**
-Gemini Flash has generous rate limits, but if you hit them, the CLI will pause or fail a file. You can simply run the command again; it will skip already processed files and retry the failed ones.
+**Ollama Connection**
+If using the Web Interface with Ollama, you must enable CORS:
+```bash
+OLLAMA_ORIGINS="*" ollama serve
+```

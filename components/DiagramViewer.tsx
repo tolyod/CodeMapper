@@ -10,14 +10,18 @@ export const DiagramViewer: React.FC<DiagramViewerProps> = ({ code }) => {
   const [error, setError] = useState<string | null>(null);
   // Dedicated invisible container for Mermaid to perform layout calculations in the DOM
   const renderContainerRef = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    mermaid.initialize({ 
-      startOnLoad: false,
-      theme: 'dark',
-      securityLevel: 'loose',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-    });
+    if (!initialized.current) {
+      mermaid.initialize({ 
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'loose',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      });
+      initialized.current = true;
+    }
   }, []);
 
   useEffect(() => {
@@ -30,7 +34,7 @@ export const DiagramViewer: React.FC<DiagramViewerProps> = ({ code }) => {
 
       try {
         // Unique ID for this render attempt to avoid collisions
-        const id = `mermaid-diagram-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const id = `mermaid-diagram-${Date.now()}`;
         
         // Clear previous content in the render container manually
         renderContainerRef.current.innerHTML = '';
@@ -91,20 +95,19 @@ export const DiagramViewer: React.FC<DiagramViewerProps> = ({ code }) => {
       {/* 
         Off-screen container for Mermaid calculations.
         CRITICAL FIX: 
-        1. 'opacity: 0' instead of 'visibility: hidden' ensures it's in the render tree for BBox calc.
-        2. 'position: fixed' prevents it from affecting layout flow.
-        3. 'width/height' ensures it has dimensions for getBBox().
-        4. 'pointerEvents: none' ensures it doesn't block clicks.
+        1. 'position: fixed' and 'left: -10000px' moves it off-screen but keeps it in the layout tree.
+        2. 'visibility: visible' ensures browsers don't optimize away layout calculations (unlike 'hidden' or 'opacity: 0').
+        3. 'width/height' provides a context for responsiveness.
       */}
       <div 
         ref={renderContainerRef}
         style={{
           position: 'fixed',
           top: 0,
-          left: 0,
+          left: '-10000px',
           width: '1024px', 
           height: '768px',
-          opacity: 0,
+          visibility: 'visible',
           zIndex: -100,
           pointerEvents: 'none',
           overflow: 'hidden'
