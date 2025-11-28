@@ -1,0 +1,5 @@
+{
+  "name": "CodeMapper C4 CLI",
+  "description": "A web-based CLI utility that iteratively scans your local codebase to generate C4 architecture diagrams using Gemini 2.5 Flash. Supports JS, Python, PHP, Go, and Java with save/resume functionality.",
+  "requestFramePermissions": []
+}
